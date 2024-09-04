@@ -13,11 +13,13 @@ import requests
 
 tx_rx_data = 0x00
 
+# cup, entrance, holder, straw class id 정의
 cup_class_id      = 0
 entrance_class_id = 1
 holder_class_id   = 2
 straw_class_id    = 3
 
+# python 메인 프로그램 state machine 정의
 PY_RESET          = 0
 PY_READY          = 1
 PY_START          = 2
@@ -26,6 +28,7 @@ PY_DETECTED       = 4
 
 current_state = PY_RESET
 
+# 디바이스 state machine 정의
 ONLY_WAITING                = 0
 RESET                       = 1
 RESET_QUEUE                 = 2 
@@ -45,13 +48,16 @@ HORIZONTAL_LOAD_CUP         = 15
 
 model = None
 
+# 시리얼 통신을 위한 연결
 py_serial = serial.Serial(
     port = "/dev/ttyUSB0",
     baudrate = 9600
 )
 
+# 로컬 서버와의 통신을 위한 URL 호출
 server_URL = 'http://203.252.136.226:8080/device'
 
+# 로컬 서버 개방 및 SocketIO 연결
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins = '*')
 
@@ -85,8 +91,8 @@ class Holder:
 model_path = "./model.pt"
 webcam = None
 
-# 0 : holder, 1 ~ 2 : 컵 크기에 따른 size, 3 ~ 4 : entrance 크기에 따른 size
 
+# 0 : holder, 1 ~ 2 : 컵 크기에 따른 size, 3 ~ 4 : entrance 크기에 따른 size
 # 00 : None
 # 01 : small
 # 10 : regular
@@ -99,12 +105,9 @@ def results_processing(largest_cup, largest_entrance, largest_holder):
         print("there's no cup")
         return commend
     
-    # 인식됐지만 유효하지 않은 경우도 리턴
-    # 추후 수정
 
     if largest_holder:
         print("w. Holder ")
-        # size 잘 맞으면 홀더로 인식 // 
         commend = commend | 0x01
     else:
         print("wo. Holder")
@@ -141,8 +144,7 @@ def results_processing(largest_cup, largest_entrance, largest_holder):
     return commend
 
     # 인식된 컵 없는 경우 'F' 리턴
-    # 인식된 컵이 있는 경우 
-
+    # 인식된 컵이 있는 경우 commend 리턴
 
 def state_update():
     global RESET, READY, START, DETECTING, DETECTED, model_path, webcam, current_state, model

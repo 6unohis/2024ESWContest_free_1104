@@ -20,6 +20,7 @@ CUP NextCUP(0, 0, 0);
 
 HX711 LoadCellScale;
 
+/* 서보 모터 정의 */
 Servo HORIZONTAL_STEPPER_wrist;
 Servo HORIZONTAL_STEPPER_finger;
 Servo VERTICAL_STEPPER_finger;
@@ -34,27 +35,34 @@ Servo QUEUE_door;
 
 volatile int reset_horizontal_direct;
 
+/* 수직, 수평 이동 그리퍼 위치 저장 변수 */
 volatile float current_horizontal_pos;
 volatile float current_vertical_pos;
 
 volatile float next_horizontal_pos;
 volatile float next_vertical_pos;
 
+/* 컵 적재 위치 저장 변수 */
 volatile int horizontal_pos_cup;
 
+/* 컵 정보 volatile 변수 */
 volatile int cup_size, cup_size_entrance, holder_exist;
 volatile int cup_cnt[5];
 
+/* current main state, queue state */
 volatile int main_current_state = RESET;
 volatile int queue_current_state = QUEUE_STOP;
 
+/* last main state, queue state */
 volatile int main_last_state;
 volatile int queue_last_state;
 
+/* 현재 처리 중인 컵 정보 저장 변수 */
 volatile int current_cup_size = 0;
 volatile int current_entrance_size = 0;
 volatile int current_holder_exist = 0;
 
+/* 처리 예정인 컵 정보 저장 변수 */
 volatile int next_cup_size = 0;
 volatile int next_entrance_size = 0;
 volatile int next_holder_exist = 0;
@@ -69,6 +77,8 @@ volatile int all_stop = 0;
 
 volatile byte tx_rx_data = 0;
 
+/* 스텝 모터 초기화 함수 */
+/* 이를 통해 스텝 모터의 과부하를 방지할 수 있음 */
 void step_clear(){
     digitalWrite(24, LOW);
     digitalWrite(26, LOW);
@@ -86,10 +96,12 @@ void step_clear(){
     digitalWrite(46, LOW);
 }
 
+/* 실수 단위의 cm to 스텝 모터의 step 변환 함수 */
 int  cm2step(float cm){
     return (SPR / CmPerCycle * cm);
 }
 
+/* 사이즈별 적재 컵 개수 확인 및 적재함 -> 보관함 이동 함수 */
 void cleaning_cup(){
     if(cup_cnt[1] >= small_cnt_threshold || cup_cnt[2] >= regular_cnt_threshold || cup_cnt[3] >= large_cnt_threshold){
         if(cup_cnt[1] >= small_cnt_threshold){
@@ -112,6 +124,7 @@ void cleaning_cup(){
     large_cup_servo.write(default_cup_angle);
 }
 
+/* 세척 과정 이후 컵 내부 물기 제거를 위한 함수 */
 void wash_post_process(){
     HORIZONTAL_STEPPER_wrist.write(HORIZONTAL_STEPPER_wrist_wash - 30);
     delay(400);
@@ -134,6 +147,7 @@ void wash_post_process(){
     HORIZONTAL_STEPPER_wrist.write(HORIZONTAL_STEPPER_wrist_wash);
 }
 
+/* 수평 이동 그리퍼 이동 함수 */
 void HORIZONTAL_STEPPER_move(){
     int steps = abs(cm2step(current_horizontal_pos - next_horizontal_pos));
 
@@ -152,12 +166,9 @@ void HORIZONTAL_STEPPER_move(){
     current_horizontal_pos = next_horizontal_pos;
 }
 
+/* 수직 이동 그리퍼 이동 함수 */
 void VERTICAL_STEPPER_move(){
     int steps = abs(cm2step(current_vertical_pos - next_vertical_pos));
-
-    if(next_vertical_pos == vertical_pos_default){
-        steps = steps + 50;
-    }
 
     if(current_vertical_pos > next_vertical_pos){ // up
         for(int i = 0; i < steps; i++){
@@ -174,6 +185,8 @@ void VERTICAL_STEPPER_move(){
     current_vertical_pos = next_vertical_pos;
 }
 
+/* 수직 이동 그리퍼 서보 모터 작동 함수 */
+/* 토크가 강한 서보 모터이기에 작은 각도 단위로 Servo 라이브러리를 활용하여 최적화 */
 void VERTICAL_STEPPER_finger_move(int src, int dst){
     if(src < dst){
         for(int i = src; i < dst; i++){
@@ -188,14 +201,17 @@ void VERTICAL_STEPPER_finger_move(int src, int dst){
     }
 }
 
+/* 뚜껑 제거 장치 돌출 함수 */
 void remove_lid_servo_in(){
     remove_lid_servo.write(REMOVE_LID_ANGLE[current_entrance_size]);
 }
 
+/* 뚜껑 제거 장치 초기화 함수 */
 void remove_lid_servo_reset(){
     remove_lid_servo.write(REMOVE_LID_ANGLE[0]);
 }
 
+/* 서보 모터 할당 함수 */
 void servo_attach(){
     HORIZONTAL_STEPPER_wrist.attach(HORIZONTAL_STEPPER_wrist_pin);
     HORIZONTAL_STEPPER_finger.attach(HORIZONTAL_STEPPER_finger_pin);
@@ -209,6 +225,8 @@ void servo_attach(){
     QUEUE_door.attach(QUEUE_DOOR_PIN);
 }
 
+/* 서보 모터 할당 해제 함수 */
+/* 위 servo_attach와 servo_detach 함수를 통해 각 서보 모터의 과부하 방지 */
 void servo_detach(){
     HORIZONTAL_STEPPER_wrist.detach();
     HORIZONTAL_STEPPER_finger.detach();
@@ -221,7 +239,7 @@ void servo_detach(){
     QUEUE_door.detach();
 }
 
-
+/* 큐체인 위치 조정 함수 */
 void queue_positioning(int speed){
     no_interrupt = 0;
     analogWrite(QUEUE_MOTOR_EN, speed + 20);
@@ -242,6 +260,7 @@ void queue_positioning(int speed){
     no_interrupt = !no_interrupt;
 }
 
+/* 수평 이동 그리퍼 토크 할당 함수 */
 void horizontal_step_hold(){
     digitalWrite(24, HIGH);
     digitalWrite(26, LOW);
@@ -249,6 +268,7 @@ void horizontal_step_hold(){
     digitalWrite(30, HIGH);
 }
 
+/* 수직 이동 그리퍼 토크 할당 함수 */
 void vertical_step_hold(){
     digitalWrite(25, HIGH);
     digitalWrite(27, LOW);
@@ -256,6 +276,8 @@ void vertical_step_hold(){
     digitalWrite(31, HIGH);
 }
 
+/* 리미트 스위치 동작에 따른 인터럽트 루틴 함수 */
+/* 수직, 수평 이동 그리퍼에 대한 처리가 주가 되며 state를 변환하여 다른 동작이 이루어지도록 함 */
 void reset_state_change(){
     end_time = millis();
     step_clear();
@@ -273,6 +295,8 @@ void reset_state_change(){
     start_time = end_time;
 }
 
+/* 리셋 버튼 동작 버튼 */
+/* ONLY WAITING을 통해 전체 기기 작동을 일시정지하며, 이후 한 번 더 동작하는 경우 reset state 진행 */
 void reset_interrupt(){
     end_time = millis();
     step_clear();
@@ -288,6 +312,7 @@ void reset_interrupt(){
     start_time = end_time;
 }
 
+/* 큐체인 리미트 스위치 인터럽트 루틴 */
 void queue_state_change(){
     end_time = millis();
     queue.Off();
@@ -299,16 +324,6 @@ void queue_state_change(){
     else{
         if(queue_current_state == QUEUE_GO) queue_current_state = QUEUE_STOP;
         else if(queue_current_state == QUEUE_STOP) queue_current_state = QUEUE_GO;
-    }
-    start_time = end_time;
-}
-
-void queue_cup_init(){
-    if(no_interrupt) return;
-
-    end_time = millis();
-    if(end_time - start_time > GLITCH){
-        queue_current_state = QUEUE_GO;
     }
     start_time = end_time;
 }
@@ -326,15 +341,16 @@ void setup(){
     pinMode(ECHO_PIN, INPUT);
     pinMode(TRIG_PIN, OUTPUT);
 
+    /* 로드셋 활성화 및 스케일 조정 */
     LoadCellScale.begin(LOADCELL_DATA_PIN, LOADCELL_CLK_PIN);
     LoadCellScale.set_scale(18.575);              
     LoadCellScale.tare(20);
 
+    /* 인터럽트 핀에 대한 인터럽트 루틴 할당 */
     attachInterrupt(digitalPinToInterrupt(RESET_PIN), reset_interrupt, CHANGE);
     attachInterrupt(digitalPinToInterrupt(HORIZONTAL_STEPPER_reset_pin), reset_state_change, RISING);
     attachInterrupt(digitalPinToInterrupt(VERTICAL_STEPPER_reset_pin), reset_state_change, RISING);
     attachInterrupt(digitalPinToInterrupt(QUEUE_INTERRUPT_PIN), queue_state_change, RISING);
-//    attachInterrupt(digitalPinToInterrupt(QUEUE_INITIALIZE_PIN), queue_cup_init, RISING);
 }
 
 void loop(){
