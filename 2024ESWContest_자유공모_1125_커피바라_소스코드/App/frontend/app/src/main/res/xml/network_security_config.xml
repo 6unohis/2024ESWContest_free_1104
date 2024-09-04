@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <!-- Optional: If you need to trust additional certificates, include them here -->
+            <domain includeSubdomains="true">203.252.136.226</domain>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
