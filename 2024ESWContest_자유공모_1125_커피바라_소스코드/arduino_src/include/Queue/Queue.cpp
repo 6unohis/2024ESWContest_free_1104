@@ -13,12 +13,12 @@ Queue::Queue(int Speed, int En_pin, int Motor_pin1, int Motor_pin2){
 }
 
 void Queue::Cw(){
-    analogWrite(this->En_pin, this->Speed);
-    delay(100);
-    digitalWrite(this->Motor_pin1, LOW);
-    digitalWrite(this->Motor_pin2, HIGH);
-    
-    analogWrite(this->En_pin, this->Speed - 20);
+    for(int i = this->Speed + 30; i > this->Speed; i-=5){
+        analogWrite(this->En_pin, i);
+        digitalWrite(this->Motor_pin1, LOW);
+        digitalWrite(this->Motor_pin2, HIGH);
+        delay(10);
+    }
 }
 
 void Queue::Ccw(){

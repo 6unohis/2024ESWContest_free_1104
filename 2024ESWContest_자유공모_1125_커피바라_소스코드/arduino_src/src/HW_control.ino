@@ -8,6 +8,7 @@
 #include<Queue.h>
 #include<HX711.h>
 
+/* Hardware definition */
 Waterpump waterpump(WATERPUMP_EN, WATERPUMP_PIN_1, WATERPUMP_PIN_2);
 
 StepperMulti VERTICAL_STEPPER(SPR, 25, 29, 27, 31);
@@ -20,7 +21,7 @@ CUP NextCUP(0, 0, 0);
 
 HX711 LoadCellScale;
 
-/* 서보 모터 정의 */
+/* Servo motor definition */
 Servo HORIZONTAL_STEPPER_wrist;
 Servo HORIZONTAL_STEPPER_finger;
 Servo VERTICAL_STEPPER_finger;
@@ -35,7 +36,7 @@ Servo QUEUE_door;
 
 volatile int reset_horizontal_direct;
 
-/* 수직, 수평 이동 그리퍼 위치 저장 변수 */
+/* 수직, 수평 이동 그리퍼 위치 변수 */
 volatile float current_horizontal_pos;
 volatile float current_vertical_pos;
 
@@ -67,14 +68,15 @@ volatile int next_cup_size = 0;
 volatile int next_entrance_size = 0;
 volatile int next_holder_exist = 0;
 
-volatile int getByte;
-
+/* 인터럽트 루틴 GLITCH */
 volatile int end_time = 0, start_time = 0;
+
+/* reset state 판별 변수 */
 volatile int reset_flag = 0;
 volatile int no_interrupt = 0;
-
 volatile int all_stop = 0;
 
+/* 시리얼 통신 송수신 데이터 저장 변수 */
 volatile byte tx_rx_data = 0;
 
 /* 스텝 모터 초기화 함수 */
@@ -240,6 +242,7 @@ void servo_detach(){
 }
 
 /* 큐체인 위치 조정 함수 */
+/* 리미트 스위치 기준 역방향 이동 후 일부 정방향 이동 */
 void queue_positioning(int speed){
     no_interrupt = 0;
     analogWrite(QUEUE_MOTOR_EN, speed + 20);
@@ -354,27 +357,31 @@ void setup(){
 }
 
 void loop(){
+    // 시리얼 데이터에 state 저장 및 전송 
     tx_rx_data = 0x00;
     tx_rx_data = main_current_state << 3;
-
     Serial.println(tx_rx_data);
 
     step_clear();
 
-    if(main_current_state != STARTING && main_current_state == main_last_state) main_current_state = RESET;
-    
+    // 동일한 state 반복 시 오류 발생 -> reset state 선언
+    if(main_current_state != STARTING && main_current_state == main_last_state) main_current_state = RESET;    
     main_last_state = main_current_state;
 
     switch(main_current_state){
-        case ONLY_WAITING:
+        // 대기 state
+        case ONLY_WAITING: 
             while(main_current_state == ONLY_WAITING){}
-        case RESET:
+
+        // reset state 시작부
+        case RESET: 
             reset_flag = 0;
             for(int i = 0; i < 4; i++) cup_cnt[i] = 0;
 
             main_current_state = RESET_QUEUE;
             break;
-
+        
+        // 큐체인 초기화 state
         case RESET_QUEUE:
             while(main_current_state == RESET_QUEUE){
                 analogWrite(QUEUE_MOTOR_EN, 100);
@@ -383,11 +390,12 @@ void loop(){
             }
             break;
 
+        // 서보 모터 초기화 state
         case RESET_SERVO:
         
             delay(50);
-
-            queue_positioning(100);
+            
+            queue_positioning(100); // 이동한 큐체인 위치 조정
             
             analogWrite(QUEUE_MOTOR_EN, 80);
             digitalWrite(QUEUE_MOTOR_PIN_1, LOW);
@@ -395,18 +403,19 @@ void loop(){
             delay(100);
 
             queue.Off();
-            
 
             delay(1500);
         
             queue_current_state = QUEUE_READY_CUP;
+
+            // 할당된 모든 서보 모터 초기값 호출 및 할당 해제
             cleaning_cup();
             remove_lid_servo_reset();
             HORIZONTAL_STEPPER_wrist.write(HORIZONTAL_STEPPER_wrist_default);
             HORIZONTAL_STEPPER_finger.write(HORIZONTAL_STEPPER_finger_default);
             VERTICAL_STEPPER_finger_move(VERTICAL_STEPPER_finger_minimum, VERTICAL_STEPPER_finger_default);
 
-            delay(3000);
+            delay(1000);
             QUEUE_door.write(20);
             delay(300);
             
@@ -415,6 +424,7 @@ void loop(){
             main_current_state = RESET_HORIZONTAL_INTERRUPT;
             break;
 
+        // 수평 이동 그리퍼 인터럽트 발생 state
         case RESET_HORIZONTAL_INTERRUPT:
             current_horizontal_pos = horizontal_pos_reset;
             while(main_current_state == RESET_HORIZONTAL_INTERRUPT){
@@ -423,6 +433,7 @@ void loop(){
 
             break;
 
+        // 수평 이동 그리퍼 초기 위치 이동 state
         case RESET_HORIZONTAL_DEFAULT:
             next_horizontal_pos = horizontal_pos_default;
             HORIZONTAL_STEPPER_move();
@@ -430,6 +441,7 @@ void loop(){
             main_current_state = RESET_VERTICAL_DEFAULT;
             break;
 
+        // 수직 이동 그리퍼 인터럽트 발생 및 초기 위치 이동 state
         case RESET_VERTICAL_DEFAULT:
             for(int i = 0; i < 100; i++){
                 VERTICAL_STEPPER.setStep(-1);
@@ -442,33 +454,35 @@ void loop(){
             }
             break;
 
+        // main state 시작 state
         case STARTING:
             servo_attach();
             switch(queue_current_state){
+                // 큐체인이 이동할 때의 queue state
                 case QUEUE_GO:
                     QUEUE_door.write(20);
-                    CurrentCUP.modifyCupInfo(NextCUP.getCupSize(), NextCUP.getEntranceSize(), NextCUP.getExistHolder());
+                    CurrentCUP.modifyCupInfo(NextCUP.getCupSize(), NextCUP.getEntranceSize(), NextCUP.getExistHolder()); // Next Cup -> Current Cup 할당
 
                     current_cup_size = CurrentCUP.getCupSize();
                     current_entrance_size = CurrentCUP.getEntranceSize();
                     current_holder_exist = CurrentCUP.getExistHolder();
 
                     if(!reset_flag){
-                        if(current_cup_size){
+                        if(current_cup_size){ // 처리 예정인 컵이 존재하는 경우 수직 이동 그리퍼는 컵을 잡을 준비
                             servo_attach();
                             VERTICAL_STEPPER_finger_move(VERTICAL_STEPPER_finger_default, VERTICAL_STEPPER_finger_ready_cup[current_entrance_size]);
                         }                        
 
-                        while(queue_current_state == QUEUE_GO && !reset_flag){
+                        while(queue_current_state == QUEUE_GO && !reset_flag){ // 큐체인 회전
                             digitalWrite(QUEUE_MOTOR_PIN_1, LOW);
                             digitalWrite(QUEUE_MOTOR_PIN_2, HIGH);
 
-                            if(current_cup_size == 0x03){
+                            if(current_cup_size == 0x03){ // 처리 예정인 컵이 Large 컵 기준인 경우 큐체인 속도 향상
                                 for(int i = QUEUE_SPEED + 50; queue_current_state == QUEUE_GO && i > QUEUE_SPEED; i -= 10){
                                   analogWrite(QUEUE_MOTOR_EN, i);
                                   delay(100);
                                 }
-                            }else{
+                            }else{ // 처리 예정인 컵이 Large가 아닌 경우 큐체인 속도 유지
                                 for(int i = QUEUE_SPEED + 20; queue_current_state == QUEUE_GO && i > QUEUE_SPEED; i -= 10){
                                   analogWrite(QUEUE_MOTOR_EN, i);
                                   delay(100);
@@ -478,11 +492,13 @@ void loop(){
                     }
                     break;
 
+                // 큐체인 정지 queue state
                 case QUEUE_STOP:
-                    vertical_step_hold();
+                    vertical_step_hold(); // 스텝 모터 토크 활성화
                     delay(200);
                     
-                    if(current_cup_size == 0x03){
+                    // 큐체인 위치 조정
+                    if(current_cup_size == 0x03){ 
                         queue_positioning(QUEUE_SPEED + 10);
                     }else queue_positioning(QUEUE_SPEED);
 
@@ -492,18 +508,16 @@ void loop(){
                     delay(100);
 
                     queue.Off();
-                    QUEUE_door.write(160);
-                    // queue door open & delay
+
+                    QUEUE_door.write(160); // 컵 투입구 개방
                     delay(500);
-                    // jetson tx2에 ready signal 보냄
+
+                    // Jetson Xavier NX에 ready signal 송신
                     tx_rx_data = 1 << 7;
                     Serial.println(tx_rx_data);
-
                     delay(500);
 
-                    // jetson tx2에서 컵 정보 받아냄
-                    // 일단 0 ~ 7로 하여 총 6개의 컵 ( 홀더 포함 ) 기준임
-                    // 0을 입력받는 경우는 컵이 아닌 경우.. python에서 처리해서 넘겨줄것
+                    // Jetson Xavier NX에서 컵 정보 수신
                     tx_rx_data = 0xFF;
 
                     while(tx_rx_data == 0xFF && !reset_flag){
@@ -512,13 +526,13 @@ void loop(){
 
                             if(tx_rx_data % 8){
                                 tx_rx_data = 0xFF;
-                            }else{
+                            }else{ 
+                                // 전송된 1Byte 데이터 구성
+                                // 홀더 1bit / 컵 크기 2bits / 입구 크기 2bits / don't care 3bits
                                 tx_rx_data = tx_rx_data >> 3;
                                 byte tmp = tx_rx_data & 0x03;
                                 next_entrance_size = tmp;
 
-                                // tmp : entrance 크기에 따른 size
-                                // 01 : small, 10 : regular, 11 : large
                                 tx_rx_data = tx_rx_data >> 2;
                                 tmp = tx_rx_data & 0x03;
                                 next_cup_size = tmp;
@@ -534,8 +548,9 @@ void loop(){
                         }
                     }
                     delay(4000);
+
                     if(!reset_flag){
-                        if(current_cup_size){
+                        if(current_cup_size){ // 처리 예정인 컵이 존재하는 경우 
                             cup_cnt[current_cup_size]++;
 
                             if(next_cup_size){
@@ -548,7 +563,7 @@ void loop(){
                             break;
                         }else{
                             // 현재 처리중인 컵이 없다면 python 입장에서도 response를 기다리면안됨
-                            // 즉, current가 없다면 python으로 0x1000_0000을 전달하여 READY로 돌아가도록 해야함
+                            // 즉, current가 없다면 python으로 0x1000_0000을 전달하여 PY_READY로 돌아가도록 해야함
                             tx_rx_data = 1 << 7;
                             Serial.println(tx_rx_data);
 
@@ -564,9 +579,12 @@ void loop(){
 
                     break;
 
+                // 큐체인 대기 state
                 case QUEUE_READY_CUP:
-                    QUEUE_door.write(160);
+                    QUEUE_door.write(160); // 컵 투입구 개방
                     delay(300);
+
+                    // 초음파 센서 활용 컵 인식 대기
                     long duration = 0;
                     int distance = 999;
                     
@@ -590,12 +608,12 @@ void loop(){
             }
             break;
             
-        
+        // 투입된 컵 수직 처리 시작 state
         case VERTICAL_HOLD_CUP:
             delay(300);
-            vertical_step_hold();
+            vertical_step_hold(); // 수직 이동 그리퍼 토크 활성화 -> 이동 제한
             
-            remove_lid_servo_in();
+            remove_lid_servo_in(); // 뚜껑 제거 장치 활성화
 
             VERTICAL_STEPPER_finger_move(VERTICAL_STEPPER_finger_ready_cup[current_entrance_size], VERTICAL_STEPPER_finger_remove_lid[current_entrance_size]);
             delay(500);
@@ -605,20 +623,21 @@ void loop(){
             }
             break;
 
+        // 홀더 및 뚜껑 제거 state
         case VERTICAL_REMOVE_LID_HOLDER:
             next_vertical_pos = vertical_pos_remove_lid;
-            VERTICAL_STEPPER_move();
+            VERTICAL_STEPPER_move(); // 뚜껑 제거를 위한 수직 이동
             
             delay(500);
             
-            remove_lid_servo_reset();
+            remove_lid_servo_reset(); // 뚜껑 제거 장치 초기화
             delay(500);
   
             next_vertical_pos = vertical_pos_holder;
-            VERTICAL_STEPPER_move();
+            VERTICAL_STEPPER_move(); // 홀더 제거를 위한 수직 이동
             
             if(!reset_flag){
-                if(current_holder_exist){
+                if(current_holder_exist){ // 홀더 유무에 따른 state 변화
                     main_current_state = HORIZONTAL_HOLD_HOLDER;
                 }else{
                     main_current_state = HORIZONTAL_HOLD_CUP;
@@ -626,15 +645,19 @@ void loop(){
             }
             break;
 
+        // 수평 이동 그리퍼 홀더 제거 state
         case HORIZONTAL_HOLD_HOLDER:
             horizontal_step_hold();
             vertical_step_hold();
 
+            // 수직 이동 그리퍼는 컵을 약하게 잡도록 제어
+            // 수평 이동 그리퍼는 홀더를 잡도록 finger 각도 제어
             VERTICAL_STEPPER_finger_move(VERTICAL_STEPPER_finger_remove_lid[current_entrance_size], VERTICAL_STEPPER_finger_ready_cup[current_entrance_size]);
             delay(500);
-            HORIZONTAL_STEPPER_finger.write(HORIZONTAL_STEPPER_finger_holder);
+            HORIZONTAL_STEPPER_finger.write(HORIZONTAL_STEPPER_finger_holder); 
             delay(500);
 
+            // 컵 수직 이동을 통한 홀더 제거
             next_vertical_pos = vertical_pos_remove_holder;
             VERTICAL_STEPPER_move();
 
@@ -643,6 +666,7 @@ void loop(){
             }
             break;
 
+        // 홀더 제거 state
         case HORIZONTAL_PLACE_HOLDER:
             vertical_step_hold();
             HORIZONTAL_STEPPER_finger.write(HORIZONTAL_STEPPER_finger_default);
@@ -653,11 +677,14 @@ void loop(){
             }
             break;
 
+        // 수직 이동 그리퍼 -> 수평 이동 그리퍼 컵 전달 state
         case HORIZONTAL_HOLD_CUP:
             vertical_step_hold();
             next_vertical_pos = vertical_pos_cup;
             VERTICAL_STEPPER_move();
 
+            // 수평 이동 그리퍼가 일정 각도인 상태에서 수직 이동 그리퍼의 각도를 초기값으로 선언
+            // 수직 이동 그리퍼에서 수평 이동 그리퍼로 컵이 전달되며 수평 이동 그리퍼의 각도를 더 강하게 제어하여 컵을 잡을 수 있도록 함
             HORIZONTAL_STEPPER_finger.write(HORIZONTAL_STEPPER_finger_cup);
             delay(500);
             VERTICAL_STEPPER_finger_move(VERTICAL_STEPPER_finger_ready_cup[current_entrance_size], VERTICAL_STEPPER_finger_default);
@@ -667,24 +694,21 @@ void loop(){
             delay(500);
             HORIZONTAL_STEPPER_finger.write(HORIZONTAL_STEPPER_finger_cup);
             delay(500);
-
-            next_vertical_pos = vertical_pos_default;
-
-            VERTICAL_STEPPER_move();
             
-            // if(!reset_flag){
-            //     main_current_state = HORIZONTAL_WASTE_CUP;
-            // }
+            // 수직 이동 그리퍼 초기 위치 이동
             current_vertical_pos = vertical_pos_default;
             while(!reset_flag && main_current_state == HORIZONTAL_HOLD_CUP){
                 VERTICAL_STEPPER.setStep(1);
             }
             break;
 
+        // 폐수, 뚜껑, 빨대 제거 state
         case HORIZONTAL_WASTE_CUP:
+            // 폐수 처리 위치로 수평 이동 그리퍼 이동
             next_horizontal_pos = horizontal_pos_waste;
             HORIZONTAL_STEPPER_move();
             
+            // 폐수 처리를 위한 수평 이동 그리퍼 wrist 제어
             HORIZONTAL_STEPPER_wrist.write(HORIZONTAL_STEPPER_wrist_waste);
             delay(1000);
 
@@ -693,21 +717,23 @@ void loop(){
             }
             break;
 
+        // 세척 state
         case HORIZONTAL_WASH_CUP:
             HORIZONTAL_STEPPER_wrist.write(HORIZONTAL_STEPPER_wrist_wash);
 
+            // 수평 이동 그리퍼 세척부 이동
             next_horizontal_pos = horizontal_pos_wash;
             HORIZONTAL_STEPPER_move();
 
+            // 워터펌프 활성화 및 종료
             waterpump.On();
-
             delay(2500);
             waterpump.Off();
             delay(300);
 
+            // 폐수 처리부 이동 및 물기 제거
             next_horizontal_pos = horizontal_pos_waste;
             HORIZONTAL_STEPPER_move();
-
             wash_post_process();
 
             if(!reset_flag){
@@ -715,36 +741,42 @@ void loop(){
             }
             break;
 
+        // 컵 적재 state
         case HORIZONTAL_LOAD_CUP:
             
+            // 로드셀 활성화를 통한 폐수 무게 측정
             LoadCellScale.power_up();
             delay(300);
             int waste_weight = (LoadCellScale.get_units() / 1000);
             LoadCellScale.power_down();
- 
+
+            // 적재를 위한 수평 이동 그리퍼 wrist 각도 제어 (small의 경우 각도를 조금 더 할당해 안정적인 적재)
             if(current_cup_size == 0x01) HORIZONTAL_STEPPER_wrist.write(0);
             else HORIZONTAL_STEPPER_wrist.write(HORIZONTAL_STEPPER_wrist_load);
 
-            horizontal_pos_cup = horizontal_pos_cup_size[current_cup_size];
+            // 현재 컵 입구 크기에 맞는 적재 위치 저장
+            horizontal_pos_cup = horizontal_pos_cup_size[current_entrance_size];
             next_horizontal_pos = horizontal_pos_cup;
             HORIZONTAL_STEPPER_move();
 
+            // 컵 적재부에 삽입
             HORIZONTAL_STEPPER_finger.write(HORIZONTAL_STEPPER_finger_cup + 20);
             delay(1500);
-
             HORIZONTAL_STEPPER_finger.write(HORIZONTAL_STEPPER_finger_default);
             delay(1000);
 
+            // 수평 이동 그리퍼 초기 위치 이동 및 wrist 각도 초기화
             next_horizontal_pos = horizontal_pos_default;
             HORIZONTAL_STEPPER_move();
-
             HORIZONTAL_STEPPER_wrist.write(HORIZONTAL_STEPPER_wrist_default);
             delay(500);
 
+            // 현재 저장중인 컵 개수에 따른 적재부 -> 보관함 이동 여부 판단
             cleaning_cup();
 
             delay(200);
 
+            // 로드셀 폐수 무게 Jetson Xavier NX에 송신
             Serial.println(waste_weight);
 
             if(!reset_flag){
